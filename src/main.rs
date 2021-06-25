@@ -105,7 +105,7 @@ impl Lunatic {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let wat = r#"
         (module
