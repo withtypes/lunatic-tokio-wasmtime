@@ -20,6 +20,8 @@ struct LunaticInner {
     next_module_id: AtomicU64,
     next_process_id: AtomicU64,
     modules: DashMap<u64, Module>,
+    started_at: DashMap<u64, Instant>,
+    ended_at: DashMap<u64, Instant>,
     instance_pre: DashMap<u64, InstancePre<()>>,
     engine: Engine,
     linker: Linker<()>,
@@ -52,6 +54,8 @@ impl Lunatic {
             next_process_id: AtomicU64::new(0),
             modules: Default::default(),
             instance_pre: Default::default(),
+            started_at: Default::default(),
+            ended_at: Default::default(),
             engine,
             linker,
         });
@@ -63,49 +67,22 @@ impl Lunatic {
                 if let Some((module_id, process_id)) = receiver.recv().await {
                     let lunatic = lunatic.clone();
                     tokio::spawn(async move {
-                        let t = Instant::now();
+                        lunatic.started_at.insert(process_id, Instant::now());
                         //let module = lunatic
                         //    .modules
                         //    .get(&module_id)
                         //    .unwrap();
                         let mut store = Store::new(&lunatic.engine, ());
                         store.add_fuel(10).ok();
-                        let store_creation_dur = t.elapsed();
                         let instance_pre = lunatic.instance_pre.get(&module_id).unwrap();
-                        let instance_pre_dur = t.elapsed();
                         //let instance = lunatic.linker.instantiate_async(&mut store, &module);
                         //let instance = instance.await.unwrap();
                         let instance = instance_pre.instantiate_async(&mut store).await.unwrap();
-                        let instance_dur = t.elapsed();
                         let hello = instance
                             .get_typed_func::<(), (), _>(&mut store, "hello")
                             .unwrap();
-                        let get_hello = t.elapsed();
                         hello.call_async(&mut store, ()).await.unwrap();
-                        let call_hello = t.elapsed();
-
-                        println!("Store creation {} ns", store_creation_dur.as_nanos());
-                        println!(
-                            "Instance pre get {} ns ({} ns)",
-                            instance_pre_dur.as_nanos(),
-                            (instance_pre_dur - store_creation_dur).as_nanos()
-                        );
-                        println!(
-                            "Instance inst {} ns ({} ns)",
-                            instance_dur.as_nanos(),
-                            (instance_dur - instance_pre_dur).as_nanos()
-                        );
-                        println!(
-                            "Get hello {} ns ({} ns)",
-                            get_hello.as_nanos(),
-                            (get_hello - instance_dur).as_nanos()
-                        );
-                        println!(
-                            "Call hello {} ns ({} ns)",
-                            call_hello.as_nanos(),
-                            (call_hello - get_hello).as_nanos()
-                        );
-                        println!("++++++")
+                        lunatic.ended_at.insert(process_id, Instant::now());
                     });
                 }
             }
@@ -149,10 +126,32 @@ async fn main() -> Result<()> {
     // and inspect them.
     thread::spawn(move || {
         let module = lunatic.load(wat).unwrap();
+        let n = 1000;
+        for _ in 0..n {
+            lunatic.start(module).ok();
+        }
         loop {
-            let _proc = lunatic.start(module).ok();
+            if lunatic.inner.started_at.len() == n && lunatic.inner.ended_at.len() == n {
+                break;
+            };
             thread::sleep(Duration::from_secs(1));
         }
+        let started_at = lunatic
+            .inner
+            .started_at
+            .iter()
+            .map(|e| e.value().clone())
+            .min()
+            .unwrap();
+        let ended_at = lunatic
+            .inner
+            .ended_at
+            .iter()
+            .map(|e| e.value().clone())
+            .max()
+            .unwrap();
+        let duration = ended_at.checked_duration_since(started_at).unwrap();
+        println!("Total duration {}ms", duration.as_millis());
     });
 
     runner.await;
