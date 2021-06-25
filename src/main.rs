@@ -1,12 +1,12 @@
+use dashmap::DashMap;
 use std::{
-    collections::HashMap,
     future::Future,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 
@@ -19,7 +19,8 @@ type ProcessId = u64;
 struct LunaticInner {
     next_module_id: AtomicU64,
     next_process_id: AtomicU64,
-    modules: RwLock<HashMap<u64, Module>>,
+    modules: DashMap<u64, Module>,
+    instance_pre: DashMap<u64, InstancePre<()>>,
     engine: Engine,
     linker: Linker<()>,
 }
@@ -39,8 +40,8 @@ impl Lunatic {
 
         linker
             .func_wrap("host", "hello", |caller: Caller<'_, ()>, param: i32| {
-                println!("Got {} from WebAssembly", param);
-                println!("my host state is: {:?}", caller.data());
+                //println!("Got {} from WebAssembly", param);
+                //println!("my host state is: {:?}", caller.data());
             })
             .unwrap();
 
@@ -50,6 +51,7 @@ impl Lunatic {
             next_module_id: AtomicU64::new(0),
             next_process_id: AtomicU64::new(0),
             modules: Default::default(),
+            instance_pre: Default::default(),
             engine,
             linker,
         });
@@ -61,21 +63,49 @@ impl Lunatic {
                 if let Some((module_id, process_id)) = receiver.recv().await {
                     let lunatic = lunatic.clone();
                     tokio::spawn(async move {
-                        let module = lunatic
-                            .modules
-                            .read()
-                            .unwrap()
-                            .get(&module_id)
-                            .cloned()
-                            .unwrap();
+                        let t = Instant::now();
+                        //let module = lunatic
+                        //    .modules
+                        //    .get(&module_id)
+                        //    .unwrap();
                         let mut store = Store::new(&lunatic.engine, ());
                         store.add_fuel(10).ok();
-                        let instance = lunatic.linker.instantiate_async(&mut store, &module);
-                        let instance = instance.await.unwrap();
+                        let store_creation_dur = t.elapsed();
+                        let instance_pre = lunatic.instance_pre.get(&module_id).unwrap();
+                        let instance_pre_dur = t.elapsed();
+                        //let instance = lunatic.linker.instantiate_async(&mut store, &module);
+                        //let instance = instance.await.unwrap();
+                        let instance = instance_pre.instantiate_async(&mut store).await.unwrap();
+                        let instance_dur = t.elapsed();
                         let hello = instance
                             .get_typed_func::<(), (), _>(&mut store, "hello")
                             .unwrap();
+                        let get_hello = t.elapsed();
                         hello.call_async(&mut store, ()).await.unwrap();
+                        let call_hello = t.elapsed();
+
+                        println!("Store creation {} ns", store_creation_dur.as_nanos());
+                        println!(
+                            "Instance pre get {} ns ({} ns)",
+                            instance_pre_dur.as_nanos(),
+                            (instance_pre_dur - store_creation_dur).as_nanos()
+                        );
+                        println!(
+                            "Instance inst {} ns ({} ns)",
+                            instance_dur.as_nanos(),
+                            (instance_dur - instance_pre_dur).as_nanos()
+                        );
+                        println!(
+                            "Get hello {} ns ({} ns)",
+                            get_hello.as_nanos(),
+                            (get_hello - instance_dur).as_nanos()
+                        );
+                        println!(
+                            "Call hello {} ns ({} ns)",
+                            call_hello.as_nanos(),
+                            (call_hello - get_hello).as_nanos()
+                        );
+                        println!("++++++")
                     });
                 }
             }
@@ -93,11 +123,11 @@ impl Lunatic {
     pub fn load(&mut self, bytes: impl AsRef<[u8]>) -> Result<ModuleId> {
         let module = Module::new(&self.inner.engine, bytes)?;
         let id = self.inner.next_module_id.fetch_add(1, Ordering::Relaxed);
-        self.inner
-            .modules
-            .write()
-            .map_err(|_| anyhow::anyhow!(""))?
-            .insert(id, module);
+        self.inner.modules.insert(id, module.clone());
+        let mut store = Store::new(&self.inner.engine, ());
+        store.add_fuel(10).ok();
+        let instance_pre = self.inner.linker.instantiate_pre(store, &module).unwrap();
+        self.inner.instance_pre.insert(id, instance_pre);
         Ok(id)
     }
 }
