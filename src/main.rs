@@ -5,6 +5,8 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, RwLock,
     },
+    thread,
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
@@ -112,8 +114,16 @@ async fn main() -> Result<()> {
         )
     "#;
     let (mut lunatic, runner) = Lunatic::new();
-    let module = lunatic.load(wat)?;
-    let _proc = lunatic.start(module)?;
+
+    // Move lunatic into another thread from which we can spawn new processes
+    // and inspect them.
+    thread::spawn(move || {
+        let module = lunatic.load(wat).unwrap();
+        loop {
+            let _proc = lunatic.start(module).ok();
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
 
     runner.await;
     Ok(())
