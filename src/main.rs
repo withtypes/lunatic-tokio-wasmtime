@@ -124,17 +124,18 @@ async fn main() -> Result<()> {
     thread::spawn(move || {
         let _module = lunatic.load(wat).unwrap();
         let module = lunatic.load(bytes).unwrap();
-        let n = 1000000;
+        let n = 3000;
         for _ in 0..n {
             lunatic.start(module).ok();
         }
         loop {
             thread::sleep(Duration::from_secs(1));
             let ended = lunatic.inner.ended_at.len();
-            if lunatic.inner.started_at.len() == n && ended == n {
+            let started = lunatic.inner.started_at.len();
+            if ended == n {
                 break;
             };
-            println!("Ended {}", ended);
+            println!("Ended {}/{}", ended, started);
         }
         let started_at = lunatic
             .inner
