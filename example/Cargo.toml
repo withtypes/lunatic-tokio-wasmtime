@@ -1,0 +1,10 @@
+[package]
+name = "lunar"
+version = "0.1.0"
+authors = ["Hrvoje Bandov <hrvoje.bandov@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+
+[lib]
+crate-type = ["cdylib"]

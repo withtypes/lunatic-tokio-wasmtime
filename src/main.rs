@@ -68,20 +68,14 @@ impl Lunatic {
                     let lunatic = lunatic.clone();
                     tokio::spawn(async move {
                         lunatic.started_at.insert(process_id, Instant::now());
-                        //let module = lunatic
-                        //    .modules
-                        //    .get(&module_id)
-                        //    .unwrap();
                         let mut store = Store::new(&lunatic.engine, ());
                         store.add_fuel(10).ok();
                         let instance_pre = lunatic.instance_pre.get(&module_id).unwrap();
-                        //let instance = lunatic.linker.instantiate_async(&mut store, &module);
-                        //let instance = instance.await.unwrap();
                         let instance = instance_pre.instantiate_async(&mut store).await.unwrap();
                         let hello = instance
-                            .get_typed_func::<(), (), _>(&mut store, "hello")
+                            .get_typed_func::<u64, u64, _>(&mut store, "hello")
                             .unwrap();
-                        hello.call_async(&mut store, ()).await.unwrap();
+                        let val = hello.call_async(&mut store, module_id).await.unwrap();
                         lunatic.ended_at.insert(process_id, Instant::now());
                     });
                 }
@@ -103,6 +97,7 @@ impl Lunatic {
         self.inner.modules.insert(id, module.clone());
         let mut store = Store::new(&self.inner.engine, ());
         store.add_fuel(10).ok();
+        store.out_of_fuel_async_yield(u32::MAX, 10);
         let instance_pre = self.inner.linker.instantiate_pre(store, &module).unwrap();
         self.inner.instance_pre.insert(id, instance_pre);
         Ok(id)
@@ -120,12 +115,14 @@ async fn main() -> Result<()> {
                 call $host_hello)
         )
     "#;
+    let bytes = include_bytes!("../example/target/wasm32-unknown-unknown/release/lunar.wasm");
     let (mut lunatic, runner) = Lunatic::new();
 
     // Move lunatic into another thread from which we can spawn new processes
     // and inspect them.
     thread::spawn(move || {
-        let module = lunatic.load(wat).unwrap();
+        let _module = lunatic.load(wat).unwrap();
+        let module = lunatic.load(bytes).unwrap();
         let n = 1000;
         for _ in 0..n {
             lunatic.start(module).ok();
