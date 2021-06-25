@@ -69,13 +69,14 @@ impl Lunatic {
                     tokio::spawn(async move {
                         lunatic.started_at.insert(process_id, Instant::now());
                         let mut store = Store::new(&lunatic.engine, ());
-                        store.add_fuel(10).ok();
+                        store.add_fuel(1000).ok();
+                        store.out_of_fuel_async_yield(u32::MAX, 1000);
                         let instance_pre = lunatic.instance_pre.get(&module_id).unwrap();
                         let instance = instance_pre.instantiate_async(&mut store).await.unwrap();
                         let hello = instance
                             .get_typed_func::<u64, u64, _>(&mut store, "hello")
                             .unwrap();
-                        let val = hello.call_async(&mut store, module_id).await.unwrap();
+                        let val = hello.call_async(&mut store, process_id).await.unwrap();
                         lunatic.ended_at.insert(process_id, Instant::now());
                     });
                 }
@@ -96,8 +97,8 @@ impl Lunatic {
         let id = self.inner.next_module_id.fetch_add(1, Ordering::Relaxed);
         self.inner.modules.insert(id, module.clone());
         let mut store = Store::new(&self.inner.engine, ());
-        store.add_fuel(10).ok();
-        store.out_of_fuel_async_yield(u32::MAX, 10);
+        store.add_fuel(1000).ok();
+        store.out_of_fuel_async_yield(u32::MAX, 1000);
         let instance_pre = self.inner.linker.instantiate_pre(store, &module).unwrap();
         self.inner.instance_pre.insert(id, instance_pre);
         Ok(id)
@@ -123,15 +124,17 @@ async fn main() -> Result<()> {
     thread::spawn(move || {
         let _module = lunatic.load(wat).unwrap();
         let module = lunatic.load(bytes).unwrap();
-        let n = 1000;
+        let n = 1000000;
         for _ in 0..n {
             lunatic.start(module).ok();
         }
         loop {
-            if lunatic.inner.started_at.len() == n && lunatic.inner.ended_at.len() == n {
+            thread::sleep(Duration::from_secs(1));
+            let ended = lunatic.inner.ended_at.len();
+            if lunatic.inner.started_at.len() == n && ended == n {
                 break;
             };
-            thread::sleep(Duration::from_secs(1));
+            println!("Ended {}", ended);
         }
         let started_at = lunatic
             .inner

@@ -4,7 +4,7 @@ pub extern "C" fn hello(x: u64) -> u64 {
 }
 
 fn colatz(x: u64, n: u64) -> u64 {
-    if x == 1 {
+    if x == 1 || x == 0 {
         return n;
     } else if x % 2 == 0 {
         return colatz(x / 2, n + 1);
